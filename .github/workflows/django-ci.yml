@@ -1,0 +1,86 @@
+name: Django CI/CD Workflow
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 🛠️ Clonar el repositorio
+        uses: actions/checkout@v3
+
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      - name: 📦 Instalar dependencias
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔍 Verificar código con flake8
+        run: |
+          source venv/bin/activate
+          pip install flake8
+          flake8 .
+
+      - name: ⚙️ Configurar base de datos
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/test_db"
+        run: |
+          source venv/bin/activate
+          python manage.py migrate
+
+      - name: ✅ Ejecutar pruebas
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@localhost:5432/test_db"
+        run: |
+          source venv/bin/activate
+          python manage.py test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: 🚀 Desplegar en producción
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /ruta/del/proyecto/
+            git pull origin main
+            source venv/bin/activate
+            pip install -r requirements.txt
+            python manage.py migrate
+            python manage.py collectstatic --noinput
+            sudo systemctl restart gunicorn
+            sudo systemctl restart nginx
